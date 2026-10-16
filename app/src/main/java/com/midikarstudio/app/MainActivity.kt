@@ -491,11 +491,12 @@ class MainActivity : Activity() {
         val ppq = division ?: 0
         if (ppq <= 0 || (ppq and 0x8000) != 0) return "--:--.---"
         val events = (listOf(TempoEvent(0L, 500000)) + tempos)
+            .groupBy { it.tick }
+            .map { it.value.last() }
             .sortedBy { it.tick }
-            .distinctBy { it.tick }
         var elapsedMicros = 0.0
         var previousTick = 0L
-        var tempo = firstTempo ?: 500000
+        var tempo = 500000
         for (event in events) {
             if (event.tick > tick) break
             if (event.tick > previousTick) elapsedMicros += (event.tick - previousTick).toDouble() * tempo / ppq
