@@ -182,11 +182,24 @@ class MainActivity : Activity() {
             Tab.LYRICS -> {
                 if (info == null) addText("Open a MIDI/KAR file first. This view currently extracts embedded lyric/text events; editing and timing are not implemented yet.", 15f, 0xFFD6DCE5.toInt())
                 else {
-                    addText("Embedded lyric/text events", 18f, 0xFF7EDCC2.toInt())
-                    val lines = info.tracks.flatMap { t -> t.lyrics.map { "Track ${t.index + 1}: $it" } }
-                    if (lines.isEmpty()) addText("No lyric/text meta-events were found in this file.", 15f, 0xFFD6DCE5.toInt())
-                    else lines.take(300).forEach { addText(it, 14f, 0xFFF5F7FA.toInt()) }
-                    if (lines.size > 300) addText("Showing first 300 of ${lines.size} lyric/text events.", 13f, 0xFFADB7C4.toInt())
+                    addText("Timed lyric events", 18f, 0xFF7EDCC2.toInt())
+                    val timedEvents = info.lyricEvents
+                    if (timedEvents.isNotEmpty()) {
+                        addText("Events are shown in playback order with their MIDI tick positions. Use these timestamps to inspect lyric timing.", 14f, 0xFFD6DCE5.toInt())
+                        timedEvents.take(500).forEachIndexed { index, event ->
+                            val cleanText = event.text.replace(Regex("[\\r\\n]+"), " ").trim()
+                            if (cleanText.isNotEmpty()) {
+                                addText("${index + 1}.  Tick ${event.tick}   •   $cleanText", 14f, 0xFFF5F7FA.toInt())
+                            }
+                        }
+                        if (timedEvents.size > 500) addText("Showing first 500 of ${timedEvents.size} timed events.", 13f, 0xFFADB7C4.toInt())
+                    } else {
+                        addText("No timed lyric events were found. Showing extracted text events instead.", 15f, 0xFFD6DCE5.toInt())
+                        val lines = info.tracks.flatMap { t -> t.lyrics.map { "Track ${t.index + 1}: $it" } }
+                        if (lines.isEmpty()) addText("No lyric/text meta-events were found in this file.", 15f, 0xFFD6DCE5.toInt())
+                        else lines.take(300).forEach { addText(it, 14f, 0xFFF5F7FA.toInt()) }
+                        if (lines.size > 300) addText("Showing first 300 of ${lines.size} lyric/text events.", 13f, 0xFFADB7C4.toInt())
+                    }
                 }
                 addAction("Open MIDI / KAR file") { openMidiFile() }
             }
