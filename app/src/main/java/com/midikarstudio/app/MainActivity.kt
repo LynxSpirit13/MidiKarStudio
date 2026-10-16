@@ -70,10 +70,12 @@ class MainActivity : Activity() {
         val totalTicks: Long = 0,
         val parseError: String? = null,
         val metadata: Map<String, List<String>> = emptyMap(),
-        val lyricEvents: List<LyricEvent> = emptyList()
+        val lyricEvents: List<LyricEvent> = emptyList(),
+        val tempoEvents: List<TempoEvent> = emptyList()
     )
 
     data class LyricEvent(val tick: Long, val text: String)
+    data class TempoEvent(val tick: Long, val microsecondsPerQuarter: Int)
 
     companion object { private const val REQUEST_OPEN_MIDI = 4101; private const val REQUEST_OPEN_SOUNDFONT = 4102 }
 
@@ -189,7 +191,8 @@ class MainActivity : Activity() {
                         timedEvents.take(500).forEachIndexed { index, event ->
                             val cleanText = event.text.replace(Regex("[\\r\\n]+"), " ").trim()
                             if (cleanText.isNotEmpty()) {
-                                addText("${index + 1}.  Tick ${event.tick}   •   $cleanText", 14f, 0xFFF5F7FA.toInt())
+                                val time = formatLyricTimestamp(event.tick, info.division, info.tempoEvents, info.tempoUs)
+                                addText("${index + 1}.  $time  •  Tick ${event.tick}  •  $cleanText", 14f, 0xFFF5F7FA.toInt())
                             }
                         }
                         if (timedEvents.size > 500) addText("Showing first 500 of ${timedEvents.size} timed events.", 13f, 0xFFADB7C4.toInt())
@@ -390,6 +393,7 @@ class MainActivity : Activity() {
         var firstTempo: Int? = null
         var maxTicks = 0L
         val allLyricEvents = mutableListOf<LyricEvent>()
+        val tempoEvents = mutableListOf<TempoEvent>()
         var error: String? = null
         val metadata = linkedMapOf<String, MutableList<String>>()
         repeat(declaredTracks) { trackIndex ->
@@ -454,7 +458,13 @@ class MainActivity : Activity() {
                             0x05 -> if (textValue.isNotBlank()) { lyrics.add(textValue); allLyricEvents.add(LyricEvent(tick, textValue)) }
                             0x06 -> if (textValue.isNotBlank()) metadata.getOrPut("marker") { mutableListOf() }.add(textValue)
                             0x07 -> if (textValue.isNotBlank()) metadata.getOrPut("cue") { mutableListOf() }.add(textValue)
-                            0x51 -> if (payload.size == 3 && firstTempo == null) firstTempo = (u8(p-length) shl 16) or (u8(p-length+1) shl 8) or u8(p-length+2)
+                            0x51 -> if (payload.size == 3) {
+                                val tempo = (u8(p-length) shl 16) or (u8(p-length+1) shl 8) or u8(p-length+2)
+                                if (tempo > 0) {
+                                    if (firstTempo == null) firstTempo = tempo
+                                    tempoEvents.add(TempoEvent(tick, tempo))
+                                }
+                            }
                         }
                         eventCount++
                         if (type == 0x2F) break
@@ -474,7 +484,30 @@ class MainActivity : Activity() {
         val valid = format in 0..2 && declaredTracks > 0 && division != 0
         return MidiFileInfo(name, bytes.size.toLong(), format, declaredTracks, division, valid,
             "Format $format • $declaredTracks track(s) • division $division", tracks, firstTempo, maxTicks, error,
-            metadata.mapValues { it.value.distinct() }, allLyricEvents.sortedBy { it.tick })
+            metadata.mapValues { it.value.distinct() }, allLyricEvents.sortedBy { it.tick }, tempoEvents.sortedBy { it.tick })
+    }
+
+    private fun formatLyricTimestamp(tick: Long, division: Int?, tempos: List<TempoEvent>, firstTempo: Int?): String {
+        val ppq = division ?: 0
+        if (ppq <= 0 || (ppq and 0x8000) != 0) return "--:--.---"
+        val events = (listOf(TempoEvent(0L, 500000)) + tempos)
+            .sortedBy { it.tick }
+            .distinctBy { it.tick }
+        var elapsedMicros = 0.0
+        var previousTick = 0L
+        var tempo = firstTempo ?: 500000
+        for (event in events) {
+            if (event.tick > tick) break
+            if (event.tick > previousTick) elapsedMicros += (event.tick - previousTick).toDouble() * tempo / ppq
+            previousTick = event.tick
+            tempo = event.microsecondsPerQuarter
+        }
+        if (tick > previousTick) elapsedMicros += (tick - previousTick).toDouble() * tempo / ppq
+        val totalMillis = (elapsedMicros / 1000.0).toLong().coerceAtLeast(0L)
+        val minutes = totalMillis / 60000L
+        val seconds = (totalMillis / 1000L) % 60L
+        val tenths = (totalMillis % 1000L) / 100L
+        return String.format("%02d:%02d.%d", minutes, seconds, tenths)
     }
 
     private fun formatBytes(bytes: Long): String = when {
