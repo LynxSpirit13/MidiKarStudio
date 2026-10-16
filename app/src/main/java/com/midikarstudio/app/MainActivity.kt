@@ -10,6 +10,7 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
@@ -25,6 +26,8 @@ class MainActivity : Activity() {
     private var selectedSoundFontName: String? = null
     private var midiPlayer: MidiFilePlayer? = null
     private var playbackProgress: TextView? = null
+    private var playbackSeekBar: SeekBar? = null
+    private var isUserSeeking = false
     private var currentLyricView: TextView? = null
     private val playbackHandler = Handler(Looper.getMainLooper())
     private val playbackTicker = object : Runnable {
@@ -35,6 +38,7 @@ class MainActivity : Activity() {
             playbackProgress?.text = if (total > 0L) {
                 "Position: $tick / $total ticks  (${(tick * 100 / total).coerceIn(0L, 100L)}%)"
             } else "Position: $tick ticks"
+            if (!isUserSeeking && total > 0L) playbackSeekBar?.progress = ((tick.coerceIn(0L, total) * 1000L) / total).toInt()
             val lyric = selectedFileInfo?.lyricEvents?.lastOrNull { it.tick <= tick }?.text
             currentLyricView?.text = lyric?.takeIf { it.isNotBlank() } ?: "No lyric event at this position"
             if (player.isPlaying) playbackHandler.postDelayed(this, 100L)
@@ -130,6 +134,25 @@ class MainActivity : Activity() {
                     setTextColor(0xFFD6DCE5.toInt()); setPadding(0, dp(6), 0, dp(6))
                 }
                 content.addView(playbackProgress)
+                playbackSeekBar = SeekBar(this).apply {
+                    max = 1000
+                    contentDescription = "MIDI playback position"
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onStartTrackingTouch(seekBar: SeekBar) { isUserSeeking = true }
+                        override fun onStopTrackingTouch(seekBar: SeekBar) {
+                            isUserSeeking = false
+                            seekPlaybackToProgress(seekBar.progress)
+                        }
+                        override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                            if (fromUser) {
+                                val total = try { midiPlayer?.durationTicks ?: selectedFileInfo?.totalTicks ?: 0L } catch (_: Exception) { 0L }
+                                if (total > 0L) playbackProgress?.text = "Seek to: ${total * progress / 1000L} / $total ticks"
+                            }
+                        }
+                    })
+                }
+                content.addView(playbackSeekBar, LinearLayout.LayoutParams(-1, dp(44)))
+                addText("Drag the bar to seek through the MIDI.", 13f, 0xFFADB7C4.toInt())
                 addText("Current lyric event", 17f, 0xFF7EDCC2.toInt())
                 currentLyricView = TextView(this).apply {
                     text = "Load a MIDI/KAR file to preview its timed lyrics."
@@ -236,6 +259,25 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             midiPlayer = null
             status.text = "Playback failed: ${e.localizedMessage ?: "engine error"}"
+            Toast.makeText(this, status.text, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun seekPlaybackToProgress(progress: Int) {
+        val player = midiPlayer
+        if (player == null) {
+            Toast.makeText(this, "Play a MIDI before seeking.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            val total = player.durationTicks
+            if (total > 0L) {
+                val targetTick = (total * progress.coerceIn(0, 1000) / 1000L).coerceIn(0L, total)
+                player.seekTo(targetTick)
+                playbackTicker.run()
+            }
+        } catch (e: Exception) {
+            status.text = "Could not seek: ${e.localizedMessage ?: "unknown error"}"
             Toast.makeText(this, status.text, Toast.LENGTH_LONG).show()
         }
     }
