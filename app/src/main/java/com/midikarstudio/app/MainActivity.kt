@@ -39,7 +39,8 @@ class MainActivity : Activity() {
         val tracks: List<TrackInfo> = emptyList(),
         val tempoUs: Int? = null,
         val totalTicks: Long = 0,
-        val parseError: String? = null
+        val parseError: String? = null,
+        val metadata: Map<String, List<String>> = emptyMap()
     )
 
     companion object { private const val REQUEST_OPEN_MIDI = 4101 }
@@ -135,6 +136,25 @@ class MainActivity : Activity() {
         addText(if ((division and 0x8000) == 0) "Timing division: $division ticks/quarter note" else "Timing division: SMPTE ($division)", 14f, 0xFFD6DCE5.toInt())
         info.tempoUs?.let { addText("First tempo event: ${"%.2f".format(60000000.0 / it)} BPM", 14f, 0xFFD6DCE5.toInt()) }
         addText("Parsed tracks: ${info.tracks.size} • Total ticks: ${info.totalTicks}", 14f, 0xFFD6DCE5.toInt())
+        addText("Embedded MIDI metadata", 18f, 0xFF7EDCC2.toInt())
+        val metadataLabels = linkedMapOf(
+            "title" to "Sequence/title",
+            "copyright" to "Copyright",
+            "trackName" to "Track name",
+            "instrumentName" to "Instrument name",
+            "text" to "Text",
+            "marker" to "Marker",
+            "cue" to "Cue point"
+        )
+        var shownMetadata = false
+        metadataLabels.forEach { (key, label) ->
+            val values = info.metadata[key].orEmpty().distinct().filter { it.isNotBlank() }
+            if (values.isNotEmpty()) {
+                shownMetadata = true
+                addText("$label: ${values.take(8).joinToString(" • ")}", 14f, 0xFFD6DCE5.toInt())
+            }
+        }
+        if (!shownMetadata) addText("No common title/copyright/text metadata was found. Track names and karaoke lyrics, if present, appear in their respective tabs.", 14f, 0xFFFFD28A.toInt())
         if (!info.headerValid) addText("This file did not pass the basic MIDI header check.", 14f, 0xFFFFD28A.toInt())
     }
 
@@ -189,6 +209,7 @@ class MainActivity : Activity() {
         var firstTempo: Int? = null
         var maxTicks = 0L
         var error: String? = null
+        val metadata = linkedMapOf<String, MutableList<String>>()
         repeat(declaredTracks) { trackIndex ->
             if (pos + 8 > bytes.size) { error = "File ended before all declared tracks were found."; return@repeat }
             if (String(bytes, pos, 4, Charsets.US_ASCII) != "MTrk") { error = "Expected MTrk at byte $pos."; return@repeat }
@@ -244,8 +265,13 @@ class MainActivity : Activity() {
                         val payload = bytes.copyOfRange(p, p + length); p += length
                         val textValue = payload.toString(Charsets.UTF_8).trim().replace("\u0000", "")
                         when (type) {
-                            0x03 -> if (textValue.isNotBlank()) trackName = textValue
-                            0x01, 0x05, 0x06 -> if (textValue.isNotBlank()) lyrics.add(textValue)
+                            0x01 -> if (textValue.isNotBlank()) { lyrics.add(textValue); metadata.getOrPut("text") { mutableListOf() }.add(textValue) }
+                            0x02 -> if (textValue.isNotBlank()) metadata.getOrPut("copyright") { mutableListOf() }.add(textValue)
+                            0x03 -> if (textValue.isNotBlank()) { trackName = textValue; metadata.getOrPut("trackName") { mutableListOf() }.add(textValue); if (trackIndex == 0) metadata.getOrPut("title") { mutableListOf() }.add(textValue) }
+                            0x04 -> if (textValue.isNotBlank()) metadata.getOrPut("instrumentName") { mutableListOf() }.add(textValue)
+                            0x05 -> if (textValue.isNotBlank()) lyrics.add(textValue)
+                            0x06 -> if (textValue.isNotBlank()) metadata.getOrPut("marker") { mutableListOf() }.add(textValue)
+                            0x07 -> if (textValue.isNotBlank()) metadata.getOrPut("cue") { mutableListOf() }.add(textValue)
                             0x51 -> if (payload.size == 3 && firstTempo == null) firstTempo = (u8(p-length) shl 16) or (u8(p-length+1) shl 8) or u8(p-length+2)
                         }
                         eventCount++
@@ -265,7 +291,8 @@ class MainActivity : Activity() {
         }
         val valid = format in 0..2 && declaredTracks > 0 && division != 0
         return MidiFileInfo(name, bytes.size.toLong(), format, declaredTracks, division, valid,
-            "Format $format • $declaredTracks track(s) • division $division", tracks, firstTempo, maxTicks, error)
+            "Format $format • $declaredTracks track(s) • division $division", tracks, firstTempo, maxTicks, error,
+            metadata.mapValues { it.value.distinct() })
     }
 
     private fun formatBytes(bytes: Long): String = when {
