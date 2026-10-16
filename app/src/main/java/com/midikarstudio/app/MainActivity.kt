@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
@@ -22,6 +24,22 @@ class MainActivity : Activity() {
     private var selectedSoundFontPath: String? = null
     private var selectedSoundFontName: String? = null
     private var midiPlayer: MidiFilePlayer? = null
+    private var playbackProgress: TextView? = null
+    private var currentLyricView: TextView? = null
+    private val playbackHandler = Handler(Looper.getMainLooper())
+    private val playbackTicker = object : Runnable {
+        override fun run() {
+            val player = midiPlayer ?: return
+            val tick = try { player.currentTick } catch (_: Exception) { 0L }
+            val total = try { player.durationTicks } catch (_: Exception) { 0L }
+            playbackProgress?.text = if (total > 0L) {
+                "Position: $tick / $total ticks  (${(tick * 100 / total).coerceIn(0L, 100L)}%)"
+            } else "Position: $tick ticks"
+            val lyric = selectedFileInfo?.lyricEvents?.lastOrNull { it.tick <= tick }?.text
+            currentLyricView?.text = lyric?.takeIf { it.isNotBlank() } ?: "No lyric event at this position"
+            if (player.isPlaying) playbackHandler.postDelayed(this, 100L)
+        }
+    }
 
     enum class Tab { PROJECT, LYRICS, PIANO_ROLL, TRACKS }
 
@@ -47,8 +65,11 @@ class MainActivity : Activity() {
         val tempoUs: Int? = null,
         val totalTicks: Long = 0,
         val parseError: String? = null,
-        val metadata: Map<String, List<String>> = emptyMap()
+        val metadata: Map<String, List<String>> = emptyMap(),
+        val lyricEvents: List<LyricEvent> = emptyList()
     )
+
+    data class LyricEvent(val tick: Long, val text: String)
 
     companion object { private const val REQUEST_OPEN_MIDI = 4101; private const val REQUEST_OPEN_SOUNDFONT = 4102 }
 
@@ -104,6 +125,18 @@ class MainActivity : Activity() {
                 addAction("Pause") { controlPlayback("pause") }
                 addAction("Resume") { controlPlayback("resume") }
                 addAction("Stop") { controlPlayback("stop") }
+                playbackProgress = TextView(this).apply {
+                    text = "Position: —"; textSize = 14f
+                    setTextColor(0xFFD6DCE5.toInt()); setPadding(0, dp(6), 0, dp(6))
+                }
+                content.addView(playbackProgress)
+                addText("Current lyric event", 17f, 0xFF7EDCC2.toInt())
+                currentLyricView = TextView(this).apply {
+                    text = "Load a MIDI/KAR file to preview its timed lyrics."
+                    textSize = 22f; setTextColor(0xFFF5F7FA.toInt())
+                    setPadding(0, dp(8), 0, dp(14))
+                }
+                content.addView(currentLyricView)
                 addAction("Create new project") {
                     status.text = "New-project editing is not implemented yet."
                     Toast.makeText(this, "New-project editing is a future milestone.", Toast.LENGTH_SHORT).show()
@@ -198,6 +231,8 @@ class MainActivity : Activity() {
             midiPlayer = MidiFilePlayer(soundFontPath, midiPath, AudioConfig())
             midiPlayer?.play()
             status.text = "Playing ${selectedFileInfo?.name ?: "MIDI"}"
+            playbackHandler.removeCallbacks(playbackTicker)
+            playbackHandler.post(playbackTicker)
         } catch (e: Exception) {
             midiPlayer = null
             status.text = "Playback failed: ${e.localizedMessage ?: "engine error"}"
@@ -213,9 +248,9 @@ class MainActivity : Activity() {
         }
         try {
             when (action) {
-                "pause" -> { player.pause(); status.text = "Playback paused" }
-                "resume" -> { player.play(); status.text = "Playback resumed" }
-                "stop" -> { player.stop(); status.text = "Playback stopped" }
+                "pause" -> { player.pause(); status.text = "Playback paused"; playbackHandler.removeCallbacks(playbackTicker); playbackTicker.run() }
+                "resume" -> { player.play(); status.text = "Playback resumed"; playbackHandler.removeCallbacks(playbackTicker); playbackHandler.post(playbackTicker) }
+                "stop" -> { player.stop(); status.text = "Playback stopped"; playbackHandler.removeCallbacks(playbackTicker); playbackTicker.run() }
             }
         } catch (e: Exception) {
             status.text = "Playback control failed: ${e.localizedMessage ?: "unknown error"}"
@@ -267,6 +302,7 @@ class MainActivity : Activity() {
                 val midiCopy = File(cacheDir, "current-$safeName")
                 midiCopy.writeBytes(bytes)
                 selectedMidiPath = midiCopy.absolutePath
+                playbackHandler.removeCallbacks(playbackTicker)
                 midiPlayer?.close()
                 midiPlayer = null
                 selectedFileInfo = parseMidi(name, bytes)
@@ -298,6 +334,7 @@ class MainActivity : Activity() {
         val tracks = mutableListOf<TrackInfo>()
         var firstTempo: Int? = null
         var maxTicks = 0L
+        val allLyricEvents = mutableListOf<LyricEvent>()
         var error: String? = null
         val metadata = linkedMapOf<String, MutableList<String>>()
         repeat(declaredTracks) { trackIndex ->
@@ -355,11 +392,11 @@ class MainActivity : Activity() {
                         val payload = bytes.copyOfRange(p, p + length); p += length
                         val textValue = payload.toString(Charsets.UTF_8).trim().replace("\u0000", "")
                         when (type) {
-                            0x01 -> if (textValue.isNotBlank()) { lyrics.add(textValue); metadata.getOrPut("text") { mutableListOf() }.add(textValue) }
+                            0x01 -> if (textValue.isNotBlank()) { lyrics.add(textValue); allLyricEvents.add(LyricEvent(tick, textValue)); metadata.getOrPut("text") { mutableListOf() }.add(textValue) }
                             0x02 -> if (textValue.isNotBlank()) metadata.getOrPut("copyright") { mutableListOf() }.add(textValue)
                             0x03 -> if (textValue.isNotBlank()) { trackName = textValue; metadata.getOrPut("trackName") { mutableListOf() }.add("Track ${trackIndex + 1}: $textValue") }
                             0x04 -> if (textValue.isNotBlank()) metadata.getOrPut("instrumentName") { mutableListOf() }.add("Track ${trackIndex + 1}: $textValue")
-                            0x05 -> if (textValue.isNotBlank()) lyrics.add(textValue)
+                            0x05 -> if (textValue.isNotBlank()) { lyrics.add(textValue); allLyricEvents.add(LyricEvent(tick, textValue)) }
                             0x06 -> if (textValue.isNotBlank()) metadata.getOrPut("marker") { mutableListOf() }.add(textValue)
                             0x07 -> if (textValue.isNotBlank()) metadata.getOrPut("cue") { mutableListOf() }.add(textValue)
                             0x51 -> if (payload.size == 3 && firstTempo == null) firstTempo = (u8(p-length) shl 16) or (u8(p-length+1) shl 8) or u8(p-length+2)
@@ -382,7 +419,7 @@ class MainActivity : Activity() {
         val valid = format in 0..2 && declaredTracks > 0 && division != 0
         return MidiFileInfo(name, bytes.size.toLong(), format, declaredTracks, division, valid,
             "Format $format • $declaredTracks track(s) • division $division", tracks, firstTempo, maxTicks, error,
-            metadata.mapValues { it.value.distinct() })
+            metadata.mapValues { it.value.distinct() }, allLyricEvents.sortedBy { it.tick })
     }
 
     private fun formatBytes(bytes: Long): String = when {
@@ -401,6 +438,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        playbackHandler.removeCallbacks(playbackTicker)
         try { midiPlayer?.stop(); midiPlayer?.close() } catch (_: Exception) { }
         midiPlayer = null
         super.onDestroy()
