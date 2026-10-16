@@ -138,13 +138,12 @@ class MainActivity : Activity() {
         addText("Parsed tracks: ${info.tracks.size} • Total ticks: ${info.totalTicks}", 14f, 0xFFD6DCE5.toInt())
         addText("Embedded MIDI metadata", 18f, 0xFF7EDCC2.toInt())
         val metadataLabels = linkedMapOf(
-            "title" to "Sequence/title",
             "copyright" to "Copyright",
-            "trackName" to "Track name",
-            "instrumentName" to "Instrument name",
-            "text" to "Text",
-            "marker" to "Marker",
-            "cue" to "Cue point"
+            "trackName" to "Track names",
+            "instrumentName" to "Instrument names",
+            "text" to "Embedded text",
+            "marker" to "Markers",
+            "cue" to "Cue points"
         )
         var shownMetadata = false
         metadataLabels.forEach { (key, label) ->
@@ -154,7 +153,8 @@ class MainActivity : Activity() {
                 addText("$label: ${values.take(8).joinToString(" • ")}", 14f, 0xFFD6DCE5.toInt())
             }
         }
-        if (!shownMetadata) addText("No common title/copyright/text metadata was found. Track names and karaoke lyrics, if present, appear in their respective tabs.", 14f, 0xFFFFD28A.toInt())
+        addText("Song title / artist: not identified from this file's metadata. The selected filename is shown above; track names are not treated as the song title.", 14f, 0xFFFFD28A.toInt())
+        if (!shownMetadata) addText("No common copyright/text metadata was found. Track names and karaoke lyrics, if present, appear in their respective tabs.", 14f, 0xFFFFD28A.toInt())
         if (!info.headerValid) addText("This file did not pass the basic MIDI header check.", 14f, 0xFFFFD28A.toInt())
     }
 
@@ -267,8 +267,8 @@ class MainActivity : Activity() {
                         when (type) {
                             0x01 -> if (textValue.isNotBlank()) { lyrics.add(textValue); metadata.getOrPut("text") { mutableListOf() }.add(textValue) }
                             0x02 -> if (textValue.isNotBlank()) metadata.getOrPut("copyright") { mutableListOf() }.add(textValue)
-                            0x03 -> if (textValue.isNotBlank()) { trackName = textValue; metadata.getOrPut("trackName") { mutableListOf() }.add(textValue); if (trackIndex == 0) metadata.getOrPut("title") { mutableListOf() }.add(textValue) }
-                            0x04 -> if (textValue.isNotBlank()) metadata.getOrPut("instrumentName") { mutableListOf() }.add(textValue)
+                            0x03 -> if (textValue.isNotBlank()) { trackName = textValue; metadata.getOrPut("trackName") { mutableListOf() }.add("Track ${trackIndex + 1}: $textValue") }
+                            0x04 -> if (textValue.isNotBlank()) metadata.getOrPut("instrumentName") { mutableListOf() }.add("Track ${trackIndex + 1}: $textValue")
                             0x05 -> if (textValue.isNotBlank()) lyrics.add(textValue)
                             0x06 -> if (textValue.isNotBlank()) metadata.getOrPut("marker") { mutableListOf() }.add(textValue)
                             0x07 -> if (textValue.isNotBlank()) metadata.getOrPut("cue") { mutableListOf() }.add(textValue)
