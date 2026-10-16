@@ -10,11 +10,18 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.io.File
+import dev.kotlinds.fluidsynthkmp.AudioConfig
+import dev.kotlinds.fluidsynthkmp.MidiFilePlayer
 
 class MainActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var status: TextView
     private var selectedFileInfo: MidiFileInfo? = null
+    private var selectedMidiPath: String? = null
+    private var selectedSoundFontPath: String? = null
+    private var selectedSoundFontName: String? = null
+    private var midiPlayer: MidiFilePlayer? = null
 
     enum class Tab { PROJECT, LYRICS, PIANO_ROLL, TRACKS }
 
@@ -43,7 +50,7 @@ class MainActivity : Activity() {
         val metadata: Map<String, List<String>> = emptyMap()
     )
 
-    companion object { private const val REQUEST_OPEN_MIDI = 4101 }
+    companion object { private const val REQUEST_OPEN_MIDI = 4101; private const val REQUEST_OPEN_SOUNDFONT = 4102 }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,6 +98,12 @@ class MainActivity : Activity() {
             Tab.PROJECT -> {
                 addText("Open a MIDI/KAR file to inspect its musical events.", 16f, 0xFFD6DCE5.toInt())
                 addAction("Open MIDI / KAR file") { openMidiFile() }
+                addAction("Choose SoundFont (.sf2)") { openSoundFont() }
+                addText("SoundFont: ${selectedSoundFontName ?: "Not selected"}", 15f, 0xFF7EDCC2.toInt())
+                addAction("Play MIDI") { startPlayback() }
+                addAction("Pause") { controlPlayback("pause") }
+                addAction("Resume") { controlPlayback("resume") }
+                addAction("Stop") { controlPlayback("stop") }
                 addAction("Create new project") {
                     status.text = "New-project editing is not implemented yet."
                     Toast.makeText(this, "New-project editing is a future milestone.", Toast.LENGTH_SHORT).show()
@@ -158,6 +171,57 @@ class MainActivity : Activity() {
         if (!info.headerValid) addText("This file did not pass the basic MIDI header check.", 14f, 0xFFFFD28A.toInt())
     }
 
+    private fun openSoundFont() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/octet-stream", "audio/x-soundfont"))
+        }
+        try { startActivityForResult(intent, REQUEST_OPEN_SOUNDFONT) }
+        catch (e: Exception) { status.text = "Could not open SoundFont picker: ${e.localizedMessage ?: "unknown error"}" }
+    }
+
+    private fun startPlayback() {
+        val midiPath = selectedMidiPath
+        val soundFontPath = selectedSoundFontPath
+        if (midiPath == null) {
+            Toast.makeText(this, "Open a MIDI/KAR file first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (soundFontPath == null) {
+            Toast.makeText(this, "Choose a .sf2 SoundFont first.", Toast.LENGTH_LONG).show()
+            openSoundFont()
+            return
+        }
+        try {
+            midiPlayer?.close()
+            midiPlayer = MidiFilePlayer(soundFontPath, midiPath, AudioConfig())
+            midiPlayer?.play()
+            status.text = "Playing ${selectedFileInfo?.name ?: "MIDI"}"
+        } catch (e: Exception) {
+            midiPlayer = null
+            status.text = "Playback failed: ${e.localizedMessage ?: "engine error"}"
+            Toast.makeText(this, status.text, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun controlPlayback(action: String) {
+        val player = midiPlayer
+        if (player == null) {
+            Toast.makeText(this, "Press Play MIDI first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            when (action) {
+                "pause" -> { player.pause(); status.text = "Playback paused" }
+                "resume" -> { player.play(); status.text = "Playback resumed" }
+                "stop" -> { player.stop(); status.text = "Playback stopped" }
+            }
+        } catch (e: Exception) {
+            status.text = "Playback control failed: ${e.localizedMessage ?: "unknown error"}"
+        }
+    }
+
     private fun openMidiFile() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
@@ -170,8 +234,28 @@ class MainActivity : Activity() {
     @Deprecated("Uses compatible activity-result callback")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_OPEN_MIDI || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
         val uri: Uri = data?.data ?: return
+        if (requestCode == REQUEST_OPEN_SOUNDFONT) {
+            try {
+                val name = queryDisplayName(uri) ?: uri.lastPathSegment ?: "SoundFont.sf2"
+                if (!name.lowercase().let { it.endsWith(".sf2") || it.endsWith(".sf3") }) {
+                    status.text = "Choose a .sf2 or .sf3 SoundFont file."
+                    return
+                }
+                val target = File(filesDir, "selected-soundfont-${name.replace(Regex("[^A-Za-z0-9._-]"), "_")}")
+                contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+                    ?: run { status.text = "Could not read SoundFont."; return }
+                selectedSoundFontPath = target.absolutePath
+                selectedSoundFontName = name
+                status.text = "SoundFont ready: $name"
+                renderTab(Tab.PROJECT)
+            } catch (e: Exception) {
+                status.text = "Could not load SoundFont: ${e.localizedMessage ?: "unknown error"}"
+            }
+            return
+        }
+        if (requestCode != REQUEST_OPEN_MIDI) return
         try {
             contentResolver.openInputStream(uri)?.use { stream ->
                 val bytes = stream.readBytes()
@@ -179,6 +263,12 @@ class MainActivity : Activity() {
                 if (!name.lowercase().let { it.endsWith(".mid") || it.endsWith(".midi") || it.endsWith(".kar") }) {
                     status.text = "Choose a .mid, .midi, or .kar file."; return
                 }
+                val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val midiCopy = File(cacheDir, "current-$safeName")
+                midiCopy.writeBytes(bytes)
+                selectedMidiPath = midiCopy.absolutePath
+                midiPlayer?.close()
+                midiPlayer = null
                 selectedFileInfo = parseMidi(name, bytes)
                 status.text = if (selectedFileInfo?.headerValid == true) "File parsed • check Tracks and Lyrics tabs" else "File opened • parser reported a header issue"
                 renderTab(Tab.PROJECT)
@@ -308,6 +398,12 @@ class MainActivity : Activity() {
     private fun addAction(label: String, action: () -> Unit) {
         content.addView(Button(this).apply { text = label; isAllCaps = false; gravity = Gravity.CENTER; setOnClickListener { action() } },
             LinearLayout.LayoutParams(-1, dp(52)).apply { bottomMargin = dp(8) })
+    }
+
+    override fun onDestroy() {
+        try { midiPlayer?.stop(); midiPlayer?.close() } catch (_: Exception) { }
+        midiPlayer = null
+        super.onDestroy()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
