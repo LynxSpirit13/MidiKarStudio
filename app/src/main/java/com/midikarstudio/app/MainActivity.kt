@@ -265,7 +265,7 @@ class MainActivity : Activity() {
                 }
             }
             selectedSoundFontPath = target.absolutePath
-            selectedSoundFontName = "OpenSoundFont GM (built-in)"
+            selectedSoundFontName = "TimGM6mb GM (built-in)"
         } catch (e: Exception) {
             selectedSoundFontPath = null
             selectedSoundFontName = null
