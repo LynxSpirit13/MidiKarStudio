@@ -29,6 +29,8 @@ class MainActivity : Activity() {
     private var playbackSeekBar: SeekBar? = null
     private var isUserSeeking = false
     private var currentLyricView: TextView? = null
+    private val lyricEventRows = mutableListOf<Pair<LyricEvent, TextView>>()
+    private var activeLyricRowIndex: Int = -1
     private val playbackHandler = Handler(Looper.getMainLooper())
     private val playbackTicker = object : Runnable {
         override fun run() {
@@ -41,6 +43,7 @@ class MainActivity : Activity() {
             if (!isUserSeeking && total > 0L) playbackSeekBar?.progress = ((tick.coerceIn(0L, total) * 1000L) / total).toInt()
             val lyric = selectedFileInfo?.lyricEvents?.lastOrNull { it.tick <= tick }?.text
             currentLyricView?.text = lyric?.takeIf { it.isNotBlank() } ?: "No lyric event at this position"
+            updateActiveLyricRow(tick)
             if (player.isPlaying) playbackHandler.postDelayed(this, 100L)
         }
     }
@@ -119,6 +122,8 @@ class MainActivity : Activity() {
 
     private fun renderTab(tab: Tab) {
         content.removeAllViews()
+        lyricEventRows.clear()
+        activeLyricRowIndex = -1
         addText(when(tab) { Tab.PROJECT -> "Project Home"; Tab.LYRICS -> "Lyrics & Karaoke Text"; Tab.PIANO_ROLL -> "Piano Roll"; Tab.TRACKS -> "Tracks & Events" }, 22f, 0xFFF5F7FA.toInt())
         val info = selectedFileInfo
         when (tab) {
@@ -192,7 +197,15 @@ class MainActivity : Activity() {
                             val cleanText = event.text.replace(Regex("[\\r\\n]+"), " ").trim()
                             if (cleanText.isNotEmpty()) {
                                 val time = formatLyricTimestamp(event.tick, info.division, info.tempoEvents, info.tempoUs)
-                                addText("${index + 1}.  $time  •  Tick ${event.tick}  •  $cleanText", 14f, 0xFFF5F7FA.toInt())
+                                val row = TextView(this).apply {
+                                    text = "${index + 1}.  $time  •  Tick ${event.tick}  •  $cleanText"
+                                    textSize = 14f
+                                    setTextColor(0xFFF5F7FA.toInt())
+                                    setPadding(dp(8), dp(10), dp(8), dp(10))
+                                    setBackgroundColor(0x00000000)
+                                }
+                                content.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(3) })
+                                lyricEventRows.add(event to row)
                             }
                         }
                         if (timedEvents.size > 500) addText("Showing first 500 of ${timedEvents.size} timed events.", 13f, 0xFFADB7C4.toInt())
@@ -277,6 +290,24 @@ class MainActivity : Activity() {
             status.text = "Playback failed: ${e.localizedMessage ?: "engine error"}"
             Toast.makeText(this, status.text, Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun updateActiveLyricRow(tick: Long) {
+        if (lyricEventRows.isEmpty()) return
+        val nextIndex = lyricEventRows.indexOfLast { it.first.tick <= tick }
+        if (nextIndex == activeLyricRowIndex) return
+        lyricEventRows.forEachIndexed { index, pair ->
+            val row = pair.second
+            if (index == nextIndex) {
+                row.setTextColor(0xFF7EDCC2.toInt())
+                row.setBackgroundColor(0xFF263B3A.toInt())
+                row.requestRectangleOnScreen(android.graphics.Rect(0, 0, row.width, row.height), false)
+            } else {
+                row.setTextColor(0xFFF5F7FA.toInt())
+                row.setBackgroundColor(0x00000000)
+            }
+        }
+        activeLyricRowIndex = nextIndex
     }
 
     private fun seekPlaybackToProgress(progress: Int) {
