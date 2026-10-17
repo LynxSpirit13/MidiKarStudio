@@ -1,22 +1,22 @@
 
 import java.net.URL
 
-// The compact OpenSoundFont GM bank is downloaded at build time and bundled in the APK,
+// The compact TimGM6mb General MIDI SoundFont is downloaded at build time and bundled in the APK,
 // so playback works offline after installation. Source is pinned to a specific commit.
 val soundFontAsset = layout.projectDirectory.file("src/main/assets/default.sf2").asFile
-val soundFontLicenseAsset = layout.projectDirectory.file("src/main/assets/OPENSOUNDFONT-LICENSE.txt").asFile
+val soundFontLicenseAsset = layout.projectDirectory.file("src/main/assets/TIMGM6MB-LICENSE.txt").asFile
 val downloadDefaultSoundFont by tasks.registering {
     outputs.files(soundFontAsset, soundFontLicenseAsset)
     doLast {
         soundFontAsset.parentFile.mkdirs()
         if (!soundFontAsset.exists() || soundFontAsset.length() < 1_000_000L) {
-            URL("https://raw.githubusercontent.com/zeittresor/opensoundfont/5a20775a9c1b874effdaf1d131862748fdd135ba/FM_GM_SoundFont_v0_2_1_mini.sf2").openStream().use { input ->
+            URL("https://raw.githubusercontent.com/craffel/pretty-midi/main/pretty_midi/TimGM6mb.sf2").openStream().use { input ->
                 soundFontAsset.outputStream().use { output -> input.copyTo(output) }
             }
             check(soundFontAsset.length() > 1_000_000L) { "Default SoundFont download was incomplete." }
         }
         if (!soundFontLicenseAsset.exists()) {
-            URL("https://raw.githubusercontent.com/zeittresor/opensoundfont/5a20775a9c1b874effdaf1d131862748fdd135ba/LICENSE").openStream().use { input ->
+            URL("https://raw.githubusercontent.com/deepin-community/timgm6mb-soundfont/master/debian/copyright").openStream().use { input ->
                 soundFontLicenseAsset.outputStream().use { output -> input.copyTo(output) }
             }
         }
