@@ -269,7 +269,6 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             selectedSoundFontPath = null
             selectedSoundFontName = null
-            status.text = "Built-in SoundFont unavailable: ${e.localizedMessage ?: "asset error"}"
         }
     }
 
