@@ -84,6 +84,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        prepareBuiltInSoundFont()
         showShell()
         renderTab(Tab.PROJECT)
     }
@@ -130,8 +131,7 @@ class MainActivity : Activity() {
             Tab.PROJECT -> {
                 addText("Open a MIDI/KAR file to inspect its musical events.", 16f, 0xFFD6DCE5.toInt())
                 addAction("Open MIDI / KAR file") { openMidiFile() }
-                addAction("Choose SoundFont (.sf2)") { openSoundFont() }
-                addText("SoundFont: ${selectedSoundFontName ?: "Not selected"}", 15f, 0xFF7EDCC2.toInt())
+                addText("Built-in SoundFont: ${selectedSoundFontName ?: "Loading default…"}", 15f, 0xFF7EDCC2.toInt())
                 addAction("Play MIDI") { startPlayback() }
                 addAction("Pause") { controlPlayback("pause") }
                 addAction("Resume") { controlPlayback("resume") }
@@ -256,6 +256,23 @@ class MainActivity : Activity() {
         if (!info.headerValid) addText("This file did not pass the basic MIDI header check.", 14f, 0xFFFFD28A.toInt())
     }
 
+    private fun prepareBuiltInSoundFont() {
+        try {
+            val target = File(filesDir, "midikarstudio-default.sf2")
+            if (!target.exists() || target.length() < 1_000_000L) {
+                assets.open("default.sf2").use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            selectedSoundFontPath = target.absolutePath
+            selectedSoundFontName = "OpenSoundFont GM (built-in)"
+        } catch (e: Exception) {
+            selectedSoundFontPath = null
+            selectedSoundFontName = null
+            status.text = "Built-in SoundFont unavailable: ${e.localizedMessage ?: "asset error"}"
+        }
+    }
+
     private fun openSoundFont() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -274,13 +291,16 @@ class MainActivity : Activity() {
             return
         }
         if (soundFontPath == null) {
-            Toast.makeText(this, "Choose a .sf2 SoundFont first.", Toast.LENGTH_LONG).show()
-            openSoundFont()
+            prepareBuiltInSoundFont()
+        }
+        val readySoundFontPath = selectedSoundFontPath
+        if (readySoundFontPath == null) {
+            Toast.makeText(this, "The built-in SoundFont could not be loaded. Please reinstall the app.", Toast.LENGTH_LONG).show()
             return
         }
         try {
             midiPlayer?.close()
-            midiPlayer = MidiFilePlayer(soundFontPath, midiPath, AudioConfig())
+            midiPlayer = MidiFilePlayer(readySoundFontPath, midiPath, AudioConfig())
             midiPlayer?.play()
             status.text = "Playing ${selectedFileInfo?.name ?: "MIDI"}"
             playbackHandler.removeCallbacks(playbackTicker)
